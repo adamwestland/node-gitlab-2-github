@@ -92,6 +92,8 @@ When listing projects on the first run (projectID = null), include archived ones
 
 GitLab's API [does not allow downloading of attachments](https://gitlab.com/gitlab-org/gitlab/-/issues/24155) and only images can be downloaded using HTTP. To work around this limitation and enable binary attachments to be migrated one can use the session cookie set in the browser after logging in to the gitlab instance. The cookie is named `_gitlab_session`.
 
+**Image Migration:** The tool supports migrating images from both relative paths (`/uploads/...`) and absolute URLs (e.g., `https://gitlab.com/.../uploads/...`). Images from absolute URLs are downloaded via HTTP and don't require the session cookie, but relative path attachments do. Configure either `s3` or `wiki` settings to upload images to accessible hosting.
+
 ### github
 
 #### github.baseUrl
@@ -142,11 +144,132 @@ IAM User who owns these credential must have [write permissions](https://docs.aw
 
 #### s3.bucket
 
-Existing bucket, with an appropriate security policy. One possible policy is to allow [public access](https://docs.aws.amazon.com/AmazonS3/latest/dev/WebsiteAccessPermissionsReqd.html).
+Existing bucket, with an appropriate security policy. Objects uploaded to S3 are set with `public-read` ACL to ensure they are accessible when embedded in GitHub issues. Alternatively, you can configure a bucket policy to allow [public access](https://docs.aws.amazon.com/AmazonS3/latest/dev/WebsiteAccessPermissionsReqd.html).
 
 #### s3.region
 
 Specify Region (example: us-west-1) of bucket [list of regions](https://docs.aws.amazon.com/general/latest/gr/s3.html)
+
+### wiki (optional)
+
+As an alternative to S3, you can use a public GitHub wiki repository to host migrated images. This is particularly useful for private repositories where you want to avoid S3 costs or infrastructure complexity.
+
+**Important:** The wiki must belong to a **public** GitHub repository. Wiki images in private repositories require authentication and won't display in GitHub issues.
+
+**Setup:**
+
+1. Create or use an existing public repository (e.g., `.github` organization profile repo)
+2. Enable wiki on the repository (Settings → Features → Wikis)
+3. Initialize the wiki by creating a Home page (visit the Wiki tab and create the first page)
+4. Clone the wiki repository: `git clone https://github.com/owner/repo.wiki.git`
+
+The migration tool will:
+- Automatically clone the wiki repository
+- Download images from both relative (`/uploads/...`) and absolute GitLab URLs
+- Upload images to the wiki repository's images directory
+- Commit and push images during migration
+- Replace GitLab URLs with public `raw.githubusercontent.com` URLs
+
+Images will be accessible at: `https://raw.githubusercontent.com/wiki/{owner}/{repo}/{imagesPath}/{filename}`
+
+**Priority:** If `proxy`, `wiki`, and `s3` are configured, priority is: proxy > wiki > s3.
+
+#### wiki.owner
+
+The GitHub user or organization that owns the public repository.
+
+#### wiki.repo
+
+The name of the **public** repository whose wiki will host the images. This can be any public repository, but using the `.github` organization profile repository is recommended.
+
+#### wiki.imagesPath
+
+The directory path within the wiki repository where images will be stored (default: `images`). The directory will be created automatically if it doesn't exist.
+
+### proxy (optional)
+
+Use an Azure Functions proxy to serve images from a private GitHub repository. This provides true privacy for sensitive images while maintaining proper rendering in GitHub issues. Unlike the wiki approach (which requires a public repository), the proxy serves images from a **private** repository, keeping them fully protected.
+
+**Architecture:**
+```
+GitHub Issue → Azure Function URL → GitHub API (authenticated) → Private Asset Repo
+```
+
+**Prerequisites:**
+1. Azure subscription
+2. Deploy the [github-image-proxy](https://github.com/your-org/github-image-proxy) Azure Function
+3. Create a private GitHub repository for storing images (e.g., `gitlab-migrated-assets`)
+4. Generate a GitHub Personal Access Token with `repo` scope
+
+**Setup:**
+
+1. **Deploy Azure Function:**
+   - Follow the setup guide in the [github-image-proxy repository](https://github.com/your-org/github-image-proxy)
+   - Deploy using VS Code Azure Functions extension (recommended for initial setup)
+   - Configure Application Settings with your GitHub PAT and asset repo URL
+
+2. **Create Private Asset Repository:**
+   ```bash
+   # On GitHub, create a private repository (e.g., gitlab-migrated-assets)
+   # Initialize with README
+   # Create an images/ directory
+   ```
+
+3. **Generate GitHub PAT:**
+   - Go to GitHub Settings → Developer settings → Personal access tokens
+   - Generate new token with `repo` scope
+   - Save securely for configuration
+
+4. **Configure Migration Tool:**
+   ```typescript
+   proxy: {
+     assetRepo: 'owner/gitlab-migrated-assets',
+     assetRepoToken: 'ghp_xxxx...', // Your GitHub PAT
+     azureFunctionUrl: 'https://your-function-app.azurewebsites.net/api/getImage',
+   }
+   ```
+
+**How It Works:**
+
+During migration, the tool will:
+- Download images from GitLab (both relative and absolute URLs)
+- Clone your private asset repository
+- Upload images to the `images/` directory in the asset repo
+- Commit and push images automatically
+- Replace GitLab URLs with Azure Function URLs: `https://your-function-app.azurewebsites.net/api/getImage?file=image.png`
+
+When users view GitHub issues:
+- Images reference the Azure Function URL
+- Azure Function authenticates with GitHub using the PAT
+- Function fetches images from the private repository
+- Images are served with proper Content-Type headers and caching
+
+**Security:**
+- Images stored in private GitHub repository (requires authentication)
+- Azure Function uses encrypted environment variables for PAT storage
+- Path traversal protection in the proxy function
+- 1-year browser caching for performance
+
+**Cost:**
+- Azure Consumption Plan: First 1 million requests/month free
+- After free tier: $0.20 per million requests
+- Typical cost for most migrations: $0/month (well within free tier)
+
+**Priority:** If configured, proxy takes precedence over wiki and S3.
+
+#### proxy.assetRepo
+
+The private GitHub repository where images will be stored. Format: `owner/repository` (e.g., `Great-Builder-Solutions/gitlab-migrated-assets`).
+
+#### proxy.assetRepoToken
+
+GitHub Personal Access Token with `repo` scope. This allows the migration tool to push images to the private repository and the Azure Function to read them.
+
+**Security Note:** Store this securely and set an expiration date with a calendar reminder to rotate it.
+
+#### proxy.azureFunctionUrl
+
+The full URL to your deployed Azure Function endpoint (e.g., `https://gitlab-image-proxy.azurewebsites.net/api/getImage`).
 
 ### usermap
 

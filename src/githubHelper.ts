@@ -143,6 +143,84 @@ export class GithubHelper {
   // ----------------------------------------------------------------------------
 
   /**
+   * Pre-flight check: validate that assignees on GitLab issues can be assigned on GitHub.
+   * Fetches all issues for the current project, collects unique assignees,
+   * maps them via usermap, then checks they are repo collaborators.
+   * Fails hard if any mapped assignee lacks repo access.
+   */
+  async validateCollaborators() {
+    if (!settings.usermap || Object.keys(settings.usermap).length === 0) return;
+
+    console.log('Pre-flight: checking assignees for this project have repo access...');
+
+    // Fetch all issues for this GitLab project to find actual assignees
+    const issues = await this.gitlabHelper.gitlabApi.Issues.all({
+      projectId: settings.gitlab.projectId,
+    });
+
+    // Collect unique GitLab usernames that are assignees
+    const gitlabAssignees = new Set<string>();
+    for (let issue of issues) {
+      if (issue.assignees) {
+        for (let assignee of issue.assignees as any[]) {
+          if (assignee.username) gitlabAssignees.add(assignee.username);
+        }
+      }
+    }
+
+    // Map to GitHub usernames via usermap
+    const githubAssignees = new Set<string>();
+    for (let glUser of gitlabAssignees) {
+      const ghUser = settings.usermap[glUser];
+      if (ghUser) githubAssignees.add(ghUser);
+    }
+
+    if (githubAssignees.size === 0) {
+      console.log('Pre-flight passed: no mapped assignees to validate.');
+      return;
+    }
+
+    // Fetch all repo collaborators
+    let collaborators = new Set<string>();
+    try {
+      const result = await this.githubApi.paginate(
+        this.githubApi.repos.listCollaborators,
+        { owner: this.githubOwner, repo: this.githubRepo, per_page: 100 }
+      );
+      for (let collab of result) {
+        collaborators.add(collab.login);
+      }
+    } catch (err) {
+      console.error('Could not fetch repo collaborators:', err.message || err);
+      process.exit(1);
+    }
+
+    // Check each assignee
+    const missing: string[] = [];
+    for (let ghUser of githubAssignees) {
+      if (!collaborators.has(ghUser)) {
+        missing.push(ghUser);
+      }
+    }
+
+    if (missing.length > 0) {
+      console.error('\n*** PRE-FLIGHT FAILED ***');
+      console.error('The following issue assignees do NOT have access to this repo:');
+      for (let user of missing) {
+        console.error(`  - ${user}`);
+      }
+      console.error(`\nRepo: ${this.githubOwner}/${this.githubRepo}`);
+      console.error('Fix: add them as collaborators or via a team, then re-run.');
+      console.error('Example: gh api -X PUT "orgs/' + this.githubOwner + '/teams/<team>/repos/' + this.githubOwner + '/' + this.githubRepo + '" -f permission=push\n');
+      process.exit(1);
+    }
+
+    console.log(`Pre-flight passed: all ${githubAssignees.size} assignees have repo access.`);
+  }
+
+  // ----------------------------------------------------------------------------
+
+  /**
    * Get a list of all GitHub milestones currently in new repo
    */
   async getAllGithubMilestones(): Promise<SimpleMilestone[]> {
@@ -527,6 +605,10 @@ export class GithubHelper {
 
     const issue_number = await this.requestImportIssue(props, comments);
 
+    if (!issue_number) {
+      throw new Error(`GitHub import API rejected issue #${issue.iid} ('${issue.title}')`);
+    }
+
     if (assignees.length > 1 && issue_number) {
       if (assignees.length > 10) {
         console.error(
@@ -688,38 +770,100 @@ export class GithubHelper {
     if (issue.body.length > 65536) {
       throw `${issue.title} has a body longer than 65536 characters. Please shorten it.`;
     }
-    // create the GitHub issue from the GitLab issue
-    let pending = await this.githubApi.request(
-      `POST /repos/${settings.github.owner}/${settings.github.repo}/import/issues`,
+
+    const maxRetries = 3;
+    const backoffDelays = [5000, 15000, 30000];
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // create the GitHub issue from the GitLab issue
+        let pending = await this.githubApi.request(
+          `POST /repos/${settings.github.owner}/${settings.github.repo}/import/issues`,
+          {
+            issue: issue,
+            comments: comments,
+          }
+        );
+
+        let result = null;
+        while (true) {
+          await utils.sleep(this.delayInMs);
+          result = await this.githubApi.request(
+            `GET /repos/${settings.github.owner}/${settings.github.repo}/import/issues/${pending.data.id}`
+          );
+          if (
+            result.data.status === 'imported' ||
+            result.data.status === 'failed'
+          ) {
+            break;
+          }
+        }
+
+        if (result.data.status === 'imported') {
+          let issue_number = result.data.issue_url.split('/').splice(-1)[0];
+          return issue_number;
+        }
+
+        // Status is 'failed' — log and retry if attempts remain
+        const errors = result.data.errors || [];
+        console.error(`\tImport failed (attempt ${attempt}/${maxRetries})`);
+        console.error('\tERRORS:', JSON.stringify(errors, null, 2));
+
+        if (attempt < maxRetries) {
+          const delay = backoffDelays[attempt - 1];
+          console.log(`\tRetrying in ${delay / 1000}s...`);
+          await utils.sleep(delay);
+        }
+      } catch (err) {
+        const status = (err as any)?.status || (err as any)?.response?.status;
+        console.error(
+          `\tImport API error (attempt ${attempt}/${maxRetries}): ${status || (err as any).message || err}`
+        );
+
+        if (attempt < maxRetries) {
+          const delay = backoffDelays[attempt - 1];
+          console.log(`\tRetrying in ${delay / 1000}s...`);
+          await utils.sleep(delay);
+        }
+      }
+    }
+
+    console.error('\tAll retry attempts exhausted for import API.');
+    return null;
+  }
+
+  /**
+   * Creates a replacement issue using the regular GitHub Issues API (not the
+   * import API). This is used as a fallback when the import API is unavailable,
+   * to maintain correct issue numbering.
+   */
+  async createReplacementViaRegularAPI(
+    title: string,
+    body: string,
+    closed: boolean,
+    labels: string[]
+  ): Promise<number> {
+    const response = await this.githubApi.request(
+      `POST /repos/${settings.github.owner}/${settings.github.repo}/issues`,
       {
-        issue: issue,
-        comments: comments,
+        title,
+        body,
+        labels,
       }
     );
 
-    let result = null;
-    while (true) {
-      await utils.sleep(this.delayInMs);
-      result = await this.githubApi.request(
-        `GET /repos/${settings.github.owner}/${settings.github.repo}/import/issues/${pending.data.id}`
+    const issueNumber = response.data.number;
+
+    if (closed) {
+      await this.githubApi.request(
+        `PATCH /repos/${settings.github.owner}/${settings.github.repo}/issues/${issueNumber}`,
+        {
+          state: 'closed',
+        }
       );
-      if (
-        result.data.status === 'imported' ||
-        result.data.status === 'failed'
-      ) {
-        break;
-      }
-    }
-    if (result.data.status === 'failed') {
-      console.log('\tFAILED: ');
-      console.log(result);
-      console.log('\tERRORS:');
-      console.log(result.data.errors);
-      return null;
     }
 
-    let issue_number = result.data.issue_url.split('/').splice(-1)[0];
-    return issue_number;
+    return issueNumber;
   }
 
   // ----------------------------------------------------------------------------
@@ -1616,7 +1760,10 @@ export class GithubHelper {
       str,
       this.repoId,
       settings.s3,
-      this.gitlabHelper
+      this.gitlabHelper,
+      settings.wiki,
+      settings.proxy,
+      this.githubRepo
     );
 
     if (add_issue_information && settings.conversion.addIssueInformation) {

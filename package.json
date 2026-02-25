@@ -34,6 +34,7 @@
     "axios": "^1.6.0",
     "mime-types": "^2.1.34",
     "readline-sync": "^1.4.10",
+    "simple-git": "^3.28.0",
     "ts-node": "^10.4.0"
   },
   "devDependencies": {

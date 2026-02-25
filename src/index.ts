@@ -26,6 +26,7 @@ const counters = {
   nrOfReplacementIssues: 0,
   nrOfFailedIssues: 0,
   nrOfPlaceholderMilestones: 0,
+  nrOfImportAPIFailures: 0,
 };
 
 if (settings.s3) {
@@ -193,6 +194,9 @@ async function migrate() {
   try {
     await githubHelper.registerRepoId();
     await gitlabHelper.registerProjectPath(settings.gitlab.projectId);
+
+    // Pre-flight: validate that all usermap targets are repo collaborators
+    await githubHelper.validateCollaborators();
 
     if (settings.transfer.description) {
       await transferDescription();
@@ -473,24 +477,27 @@ async function transferIssues() {
         await githubHelper.createIssueAndComments(issue);
         console.log(`\t...DONE migrating issue #${issue.iid}.`);
       } catch (err) {
+        counters.nrOfImportAPIFailures++;
         console.log(`\t...ERROR while migrating issue #${issue.iid}.`);
-
-        console.error('DEBUG:\n', err); // TODO delete this after issue-migration-fails have been fixed
+        console.error(`\tReason: ${err.message || err}`);
 
         if (settings.useReplacementIssuesForCreationFails) {
-          console.log('\t-> creating a replacement issue...');
+          console.log('\t-> creating replacement issue via regular API...');
           const replacementIssue = createReplacementIssue(issue);
           try {
-            await githubHelper.createIssueAndComments(
-              replacementIssue as GitLabIssue
-            ); // HACK: remove type coercion
+            await githubHelper.createReplacementViaRegularAPI(
+              replacementIssue.title,
+              replacementIssue.description,
+              issue.state === 'closed',
+              ['migration-failed']
+            );
 
             counters.nrOfReplacementIssues++;
-            console.error('\t...DONE.');
+            console.log('\t...DONE (replacement created via regular API).');
           } catch (err) {
             counters.nrOfFailedIssues++;
             console.error(
-              '\t...ERROR: Could not create replacement issue either!'
+              `\t...ERROR: Could not create replacement issue via regular API either! ${(err as any).message || err}`
             );
           }
         }
@@ -516,6 +523,7 @@ async function transferIssues() {
   console.log(
     `\tNr. of used replacement issues: ${counters.nrOfReplacementIssues}`
   );
+  console.log(`\tNr. of import API failures: ${counters.nrOfImportAPIFailures}`);
   console.log(`\tNr. of issue migration fails: ${counters.nrOfFailedIssues}`);
 }
 // ----------------------------------------------------------------------------

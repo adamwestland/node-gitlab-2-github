@@ -38,6 +38,8 @@ export default interface Settings {
     [key: string]: string;
   };
   s3?: S3Settings;
+  wiki?: WikiSettings;
+  proxy?: ProxySettings;
 }
 
 export interface GithubSettings {
@@ -66,4 +68,16 @@ export interface S3Settings {
   secretAccessKey: string;
   bucket: string;
   region: string;
+}
+
+export interface WikiSettings {
+  owner: string;
+  repo: string;
+  imagesPath: string;
+}
+
+export interface ProxySettings {
+  assetRepo: string;        // e.g., "owner/gitlab-migrated-assets"
+  assetRepoToken: string;   // GitHub PAT with repo access
+  azureFunctionUrl: string; // e.g., "https://your-app.azurewebsites.net/api/getImage"
 }

@@ -120,21 +120,19 @@ export class GitlabHelper {
    */
   async getAttachment(relurl: string) {
     try {
-      const attachmentUrl = this.host + '/-/project/' + this.gitlabProjectId + relurl;
+      const attachmentUrl = this.host + '/api/v4/projects/' + this.gitlabProjectId + relurl;
       const data = (
         await axios.get(attachmentUrl, {
           responseType: 'arraybuffer',
+          maxRedirects: 5,
           headers: {
-            // HACK: work around GitLab's API lack of GET for attachments
-            // See https://gitlab.com/gitlab-org/gitlab/-/issues/24155
-            Cookie: `_gitlab_session=${this.sessionCookie}`,
+            'PRIVATE-TOKEN': this.gitlabToken,
           },
         })
       ).data;
       return Buffer.from(data, 'binary');
     } catch (err) {
-      console.error(`Could not download attachment ${relurl}: ${err.response.statusText}`);
-      console.error('Is your session cookie still valid?');
+      console.error(`Could not download attachment ${relurl}: ${err.response?.statusText || err.message}`);
       return null;
     }
   }
