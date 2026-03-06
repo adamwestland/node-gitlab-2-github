@@ -110,6 +110,11 @@ const ensureAssetRepoCloned = async (proxy: ProxySettings) => {
       console.log(`Cloning asset repo: ${owner}/${repo}...`);
       await git.clone(repoUrl, assetRepoPath);
     }
+    // Set bot identity for asset repo commits (avoids inflating personal contribution graphs)
+    const assetGit = simpleGit(assetRepoPath);
+    await assetGit.addConfig('user.name', 'GitLab Migration Bot');
+    await assetGit.addConfig('user.email', 'gitlab-migration-bot@noreply.greatbuildersolutions.com');
+
     assetRepoCloned = true;
     return assetRepoPath;
   } catch (err) {
