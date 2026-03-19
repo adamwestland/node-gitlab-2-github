@@ -771,12 +771,14 @@ export class GithubHelper {
       throw `${issue.title} has a body longer than 65536 characters. Please shorten it.`;
     }
 
-    const maxRetries = 3;
-    const backoffDelays = [5000, 15000, 30000];
+    // Phase 1: POST the import request (with retries)
+    // Once the POST succeeds, we NEVER re-POST to avoid creating duplicate issues.
+    const postMaxRetries = 3;
+    const postBackoffDelays = [5000, 15000, 30000];
+    let pendingId: number | null = null;
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    for (let attempt = 1; attempt <= postMaxRetries; attempt++) {
       try {
-        // create the GitHub issue from the GitLab issue
         let pending = await this.githubApi.request(
           `POST /repos/${settings.github.owner}/${settings.github.repo}/import/issues`,
           {
@@ -784,51 +786,64 @@ export class GithubHelper {
             comments: comments,
           }
         );
-
-        let result = null;
-        while (true) {
-          await utils.sleep(this.delayInMs);
-          result = await this.githubApi.request(
-            `GET /repos/${settings.github.owner}/${settings.github.repo}/import/issues/${pending.data.id}`
-          );
-          if (
-            result.data.status === 'imported' ||
-            result.data.status === 'failed'
-          ) {
-            break;
-          }
+        pendingId = pending.data.id;
+        break; // POST succeeded — exit retry loop
+      } catch (err) {
+        const status = (err as any)?.status || (err as any)?.response?.status;
+        console.error(
+          `\tImport POST error (attempt ${attempt}/${postMaxRetries}): ${status || (err as any).message || err}`
+        );
+        if (attempt < postMaxRetries) {
+          const delay = postBackoffDelays[attempt - 1];
+          console.log(`\tRetrying POST in ${delay / 1000}s...`);
+          await utils.sleep(delay);
         }
+      }
+    }
+
+    if (pendingId === null) {
+      console.error('\tAll POST retry attempts exhausted for import API.');
+      return null;
+    }
+
+    // Phase 2: Poll for import completion (with retries)
+    // Poll errors only retry the poll — never re-POST.
+    const pollMaxRetries = 10;
+    const pollBackoffMs = 3000;
+
+    for (let pollAttempt = 1; pollAttempt <= pollMaxRetries; pollAttempt++) {
+      try {
+        await utils.sleep(this.delayInMs);
+        let result = await this.githubApi.request(
+          `GET /repos/${settings.github.owner}/${settings.github.repo}/import/issues/${pendingId}`
+        );
 
         if (result.data.status === 'imported') {
           let issue_number = result.data.issue_url.split('/').splice(-1)[0];
           return issue_number;
         }
 
-        // Status is 'failed' — log and retry if attempts remain
-        const errors = result.data.errors || [];
-        console.error(`\tImport failed (attempt ${attempt}/${maxRetries})`);
-        console.error('\tERRORS:', JSON.stringify(errors, null, 2));
-
-        if (attempt < maxRetries) {
-          const delay = backoffDelays[attempt - 1];
-          console.log(`\tRetrying in ${delay / 1000}s...`);
-          await utils.sleep(delay);
+        if (result.data.status === 'failed') {
+          const errors = result.data.errors || [];
+          console.error(`\tImport failed (status: failed, pending ID: ${pendingId})`);
+          console.error('\tERRORS:', JSON.stringify(errors, null, 2));
+          return null; // Don't re-POST — the issue may have been partially created
         }
+
+        // Status is 'pending' — continue polling
       } catch (err) {
         const status = (err as any)?.status || (err as any)?.response?.status;
         console.error(
-          `\tImport API error (attempt ${attempt}/${maxRetries}): ${status || (err as any).message || err}`
+          `\tPoll error (attempt ${pollAttempt}/${pollMaxRetries}): ${status || (err as any).message || err}`
         );
-
-        if (attempt < maxRetries) {
-          const delay = backoffDelays[attempt - 1];
-          console.log(`\tRetrying in ${delay / 1000}s...`);
-          await utils.sleep(delay);
+        if (pollAttempt < pollMaxRetries) {
+          console.log(`\tRetrying poll in ${pollBackoffMs / 1000}s...`);
+          await utils.sleep(pollBackoffMs);
         }
       }
     }
 
-    console.error('\tAll retry attempts exhausted for import API.');
+    console.error(`\tPoll retries exhausted for pending import ID ${pendingId}. Issue may have been created — check manually.`);
     return null;
   }
 
