@@ -1143,7 +1143,7 @@ export class GithubHelper {
     }
 
     // figure out new commit
-    const cherry_picked_commit = settings.commitMap[head_sha];
+    const cherry_picked_commit = settings.commitMap?.[head_sha];
     if (cherry_picked_commit) {
       head_sha = cherry_picked_commit;
     }

@@ -14,7 +14,6 @@ import { Gitlab } from '@gitbeaker/node';
 import { default as readlineSync } from 'readline-sync';
 import * as fs from 'fs';
 
-import AWS from 'aws-sdk';
 
 const CCERROR = '\x1b[31m%s\x1b[0m'; // red
 const CCWARN = '\x1b[33m%s\x1b[0m'; // yellow
@@ -27,13 +26,6 @@ const counters = {
   nrOfFailedIssues: 0,
   nrOfPlaceholderMilestones: 0,
 };
-
-if (settings.s3) {
-  AWS.config.credentials = new AWS.Credentials({
-    accessKeyId: settings.s3.accessKeyId,
-    secretAccessKey: settings.s3.secretAccessKey,
-  });
-}
 
 // Ensure that the GitLab token has been set in settings.js
 if (

@@ -1,5 +1,6 @@
 export default interface Settings {
   dryRun: boolean;
+  commitMap?: { [sha: string]: string };
   exportUsers: boolean;
   gitlab: GitlabSettings;
   github: GithubSettings;

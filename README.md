@@ -287,3 +287,17 @@ duration of the migration process. Some users may even be willing to accept a ve
 ### Make requests run in parallel
 
 Some requests could be run in parallel, to shorten the total duration. Currently all GitLab- and Github-Api-Requests are run sequentially.
+
+## Dependency compatibility and tests
+
+Requires Node.js **22.12 or newer** (Node 22/24 tested). This permits the CommonJS
+TypeScript CLI to load current ESM Octokit packages. Install with `npm ci`; copy
+`sample_settings.ts` to `settings.ts` before running `npm run typecheck` and `npm test`.
+Tests use sample credentials and mock AWS/GitHub/GitLab requests; they do not run a
+live migration. CI runs both supported Node major versions.
+
+S3 uploads use AWS SDK v3 and await completion before replacing attachment links.
+Provision the configured bucket first, specify its region, and grant the supplied
+credentials permission to upload objects (including multipart uploads). Bucket
+creation is not attempted. Failed uploads now stop conversion rather than silently
+publishing broken links.

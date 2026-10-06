@@ -1,11 +1,17 @@
 {
   "compilerOptions": {
     "allowJs": false,
-    "lib": ["es2020.string"],
-    "target": "es5",
-    "downlevelIteration": true,
-    //"strict": true,
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "esModuleInterop": true
   },
-  "include": ["./src/**/*", "settings.ts"]
+  "include": [
+    "./src/**/*",
+    "settings.ts"
+  ]
 }

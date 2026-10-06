@@ -3,7 +3,8 @@ import settings from '../settings';
 import * as mime from 'mime-types';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import S3 from 'aws-sdk/clients/s3';
+import { S3Client } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { GitlabHelper } from './gitlabHelper';
 
 export const sleep = (milliseconds: number) => {
@@ -58,24 +59,29 @@ export const migrateAttachments = async (
       }
       const s3url = `https://${hostname}/${relativePath}`;
 
-      const s3bucket = new S3();
-      s3bucket.createBucket(() => {
-        const params: S3.PutObjectRequest = {
-          Key: relativePath,
-          Body: attachmentBuffer,
-          ContentType: mimeType === false ? undefined : mimeType,
-          Bucket: s3.bucket,
-        };
-
-        s3bucket.upload(params, function (err, data) {
-          console.log(`\tUploading ${basename} to ${s3url}... `);
-          if (err) {
-            console.log('ERROR: ', err);
-          } else {
-            console.log(`\t...Done uploading`);
-          }
-        });
+      const client = new S3Client({
+        region: s3.region || 'us-east-1',
+        credentials: {
+          accessKeyId: s3.accessKeyId,
+          secretAccessKey: s3.secretAccessKey,
+        },
       });
+      try {
+        // The configured bucket must exist. Await upload before publishing a link;
+        // SDK v3's Upload retains multipart support for large attachments.
+        await new Upload({
+          client,
+          params: {
+            Key: relativePath,
+            Body: attachmentBuffer,
+            ContentType: mimeType === false ? undefined : mimeType,
+            Bucket: s3.bucket,
+          },
+        }).done();
+        console.log(`\tUploaded ${basename} to ${s3url}`);
+      } finally {
+        client.destroy();
+      }
 
       // Add the new URL to the map
       offsetToAttachment[
@@ -95,7 +101,7 @@ export const migrateAttachments = async (
 
   return body.replace(
     regexp,
-    ({}, {}, {}, {}, offset, {}) => offsetToAttachment[offset]
+    (match, _prefix, _name, _url, offset) => offsetToAttachment[offset] ?? match
   );
 };
 
