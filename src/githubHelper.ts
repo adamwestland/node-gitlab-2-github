@@ -432,7 +432,7 @@ export class GithubHelper {
   convertLabels(item: GitLabIssue | GitLabMergeRequest): string[] {
     let labels: string[] = [];
     if (item.labels) {
-      labels = item.labels.filter(l => {
+      labels = item.labels.map(label => typeof label === 'string' ? label : label.name).filter(l => {
         if (item.state !== 'closed') return true;
 
         let lower = l.toLowerCase();
@@ -1100,7 +1100,7 @@ export class GithubHelper {
 
       // Add a label to indicate the issue is a merge request
       if (!mergeRequest.labels) mergeRequest.labels = [];
-      mergeRequest.labels.push('gitlab merge request');
+      mergeRequest.labels = [...mergeRequest.labels.map(label => typeof label === 'string' ? label : label.name), 'gitlab merge request'];
 
       return this.githubApi.issues.create(props);
     }

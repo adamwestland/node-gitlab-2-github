@@ -104,3 +104,32 @@ test('CLI loads upgraded dependencies and refuses sample credentials before migr
   assert.match(result.stdout, /enter your GitLab private token/);
   assert.doesNotMatch(result.stderr, /ERR_REQUIRE_ESM|TSError|Cannot find module/);
 });
+
+test('Gitbeaker REST migration uses snake-case projects, labels, releases and MR approvals', async () => {
+  const http = require('node:http');
+  const { Gitlab } = require('@gitbeaker/rest');
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    requests.push(req.url);
+    assert.equal(req.headers['private-token'], 'fixture-token');
+    res.setHeader('content-type', 'application/json');
+    const path = new URL(req.url, 'http://localhost').pathname;
+    const body = path.endsWith('/approvals') ? {approved_by:[{user:{username:'reviewer'}}]} :
+      path.endsWith('/labels') ? [{id:1,name:'ready',color:'#ffffff'}] :
+      path.endsWith('/releases') ? [{tag_name:'v1',released_at:'2026-10-26T12:00:00Z'}] :
+      {id:42,path_with_namespace:'group/project'};
+    res.end(JSON.stringify(body));
+  });
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+  try {
+    const host = `http://127.0.0.1:${server.address().port}`;
+    const api = new Gitlab({host,token:'fixture-token'});
+    const helper = new GitlabHelper(api,{url:host,token:'fixture-token',projectId:42,sessionCookie:''});
+    await helper.registerProjectPath(42);
+    assert.equal(helper.projectPath,'group/project');
+    assert.deepEqual(await helper.getMergeRequestApprovals(7),['reviewer']);
+    assert.equal((await api.ProjectLabels.all(42))[0].name,'ready');
+    assert.equal((await api.ProjectReleases.all(42))[0].tag_name,'v1');
+    assert.ok(requests.some(url=>url.startsWith('/api/v4/projects/42/merge_requests/7/approvals')));
+  } finally { await new Promise(resolve=>server.close(resolve)); }
+});
