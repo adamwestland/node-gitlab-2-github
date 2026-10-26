@@ -30,7 +30,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",
     "@aws-sdk/lib-storage": "^3.1146.0",
-    "@gitbeaker/node": "^35.1.0",
+    "@gitbeaker/rest": "^43.8.0",
     "@octokit/plugin-throttling": "^11.0.1",
     "@octokit/rest": "^21.1.1",
     "@octokit/types": "^14.1.0",

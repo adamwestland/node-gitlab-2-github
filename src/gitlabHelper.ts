@@ -1,18 +1,18 @@
-import { Gitlab } from '@gitbeaker/node';
+import { Gitlab } from '@gitbeaker/rest';
 import {
-  DiscussionNote,
+  DiscussionNoteSchema,
   DiscussionSchema,
   IssueSchema,
   MergeRequestSchema,
   MilestoneSchema,
   NoteSchema,
   UserSchema,
-} from '@gitbeaker/core/dist/types/types';
+} from '@gitbeaker/rest';
 import { GitlabSettings } from './settings';
 import axios from 'axios';
 
 export type GitLabDiscussion = DiscussionSchema;
-export type GitLabDiscussionNote = DiscussionNote;
+export type GitLabDiscussionNote = DiscussionNoteSchema;
 export type GitLabIssue = IssueSchema;
 export type GitLabNote = NoteSchema;
 export type GitLabUser = Omit<UserSchema, 'created_at'>;
@@ -22,7 +22,7 @@ export type GitLabMergeRequest = MergeRequestSchema;
 export class GitlabHelper {
   // Wait for this issue to be resolved
   // https://github.com/jdalrymple/gitbeaker/issues/793
-  gitlabApi: InstanceType<typeof Gitlab>;
+  gitlabApi: InstanceType<typeof Gitlab<false>>;
 
   gitlabUrl?: string;
   gitlabToken: string;
@@ -35,7 +35,7 @@ export class GitlabHelper {
   allBranches: any;
 
   constructor(
-    gitlabApi: InstanceType<typeof Gitlab>,
+    gitlabApi: InstanceType<typeof Gitlab<false>>,
     gitlabSettings: GitlabSettings
   ) {
     this.gitlabApi = gitlabApi;
@@ -153,10 +153,10 @@ export class GitlabHelper {
 
   async getMergeRequestApprovals(mergeRequestIid: number): Promise<string[]> {
     try {
-      let approvals = await this.gitlabApi.MergeRequestApprovals.configuration(
+      let approvals = await this.gitlabApi.MergeRequestApprovals.showConfiguration(
         this.gitlabProjectId,
         {
-          mergerequestIid: mergeRequestIid,
+          mergerequestIId: mergeRequestIid,
         },
       );
       if (approvals.approved_by) {

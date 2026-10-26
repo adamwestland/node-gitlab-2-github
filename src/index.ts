@@ -9,7 +9,7 @@ import settings from '../settings';
 
 import { Octokit as GitHubApi } from '@octokit/rest';
 import { throttling } from '@octokit/plugin-throttling';
-import { Gitlab } from '@gitbeaker/node';
+import { Gitlab } from '@gitbeaker/rest';
 
 import { default as readlineSync } from 'readline-sync';
 import * as fs from 'fs';
@@ -338,7 +338,7 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
   const invalidUnicode = /[\u{10000}-\u{10FFFF}]|(?![*#0-9]+)[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}\p{Emoji_Modifier_Base}\p{Emoji_Presentation}]/gu;
 
   // Get a list of all labels associated with this project
-  let labels: SimpleLabel[] = await gitlabApi.Labels.all(
+  let labels: SimpleLabel[] = await gitlabApi.ProjectLabels.all(
     settings.gitlab.projectId
   );
 
@@ -616,7 +616,7 @@ async function transferReleases() {
   inform('Transferring Releases');
 
   // Get a list of all releases associated with this project
-  let releases = await gitlabApi.Releases.all(settings.gitlab.projectId);
+  let releases = await gitlabApi.ProjectReleases.all(settings.gitlab.projectId);
 
   // Sort releases in ascending order of their release date
   releases = releases.sort((a, b) => {
